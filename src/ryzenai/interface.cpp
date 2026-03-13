@@ -160,7 +160,8 @@ struct Interface : RyzenAIInterface {
                                                                            ep_keys.data(), ep_values.data(), ep_keys.size()));
     }
 
-    Ort::ThrowOnError(Ort::api->RegisterCustomOpsLibrary_V2(&session_options, ep_path_.native().c_str()));
+    // TODO: Disabled RegisterCustomOpsLibrary_V2 — custom ops are already registered via the EP plugin
+    // Ort::ThrowOnError(Ort::api->RegisterCustomOpsLibrary_V2(&session_options, ep_path_.native().c_str()));
   }
 
   DeviceType GetType() const override { return DeviceType::RyzenAI; }
