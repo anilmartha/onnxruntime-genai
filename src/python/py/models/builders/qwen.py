@@ -5,6 +5,8 @@
 # --------------------------------------------------------------------------
 
 
+import os
+
 import onnx_ir as ir
 import torch
 from transformers import Qwen2_5_VLForConditionalGeneration, Qwen3VLForConditionalGeneration
@@ -929,3 +931,51 @@ class VideoChatFlashQwenModel(QwenModel):
     def __init__(self, config, io_dtype, onnx_dtype, ep, cache_dir, extra_options):
         super().__init__(config, io_dtype, onnx_dtype, ep, cache_dir, extra_options)
         self.model_type = "videochat_flash_qwen"
+        # The custom remote code requires video libraries (av, cv2, decord, imageio)
+        # which are not needed to export the LM backbone. Disable trust_remote_code
+        # so base class helpers (make_genai_config, save_processing) use standard paths.
+        self.hf_remote = False
+
+    def make_genai_config(self, model_name_or_path, extra_kwargs, out_dir):
+        # make_genai_config in base.py calls AutoConfig with trust_remote_code,
+        # which triggers the video library imports. Instead, write a clean
+        # Qwen2-compatible config.json to a temp dir and let base class read it.
+        import json as _json
+        import shutil
+        import tempfile
+
+        from transformers import Qwen2Config
+
+        vcf_config = Qwen2Config.from_pretrained(model_name_or_path, token=self.hf_token, **extra_kwargs)
+        vcf_config.architectures = ["VideoChatFlashQwenForCausalLM"]
+        vcf_config.model_type = "videochat_flash_qwen"
+        vcf_config._name_or_path = model_name_or_path
+
+        tmp_dir = tempfile.mkdtemp()
+        try:
+            with open(os.path.join(tmp_dir, "config.json"), "w") as f:
+                _json.dump(vcf_config.to_dict(), f)
+            super().make_genai_config(tmp_dir, {}, out_dir)
+        finally:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+
+        # Restore the correct model type (base class may write "qwen2" from Qwen2Config)
+        gcfg_path = os.path.join(out_dir, "genai_config.json")
+        if os.path.isfile(gcfg_path):
+            with open(gcfg_path) as f:
+                gcfg = _json.load(f)
+            gcfg["model"]["type"] = "videochat_flash_qwen"
+            with open(gcfg_path, "w") as f:
+                _json.dump(gcfg, f, indent=2)
+
+    def load_weights(self, input_path):
+        # The LM backbone is identical to Qwen2ForCausalLM. Load it directly
+        # to avoid the custom remote code (which requires video libraries).
+        from transformers import Qwen2ForCausalLM
+        print("Loading VideoChatFlash model as Qwen2ForCausalLM...")
+        extra_kwargs = {} if os.path.isdir(self.model_name_or_path) else {"cache_dir": self.cache_dir}
+        return Qwen2ForCausalLM.from_pretrained(
+            self.model_name_or_path,
+            token=self.hf_token,
+            **extra_kwargs,
+        )

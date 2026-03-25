@@ -36,11 +36,14 @@ Usage:
 import argparse
 import json
 import os
+import sys
 
-import torch
-import torch.nn as nn
+# Use the local OGA model builder (src/python/py/models/builder.py)
+# so our VideoChatFlashQwenModel registration is picked up.
+_REPO_ROOT = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+sys.path.insert(0, os.path.join(_REPO_ROOT, "src", "python", "py", "models"))
 
-from onnxruntime_genai.models.builder import create_model
+from builder import create_model  # noqa: E402 (local OGA builder)
 
 HF_MODEL_ID = "OpenGVLab/VideoChat-Flash-Qwen2_5-7B_InternVideo2-1B"
 
@@ -49,11 +52,13 @@ IMAGE_TOKEN_ID = 151646  # <|image_pad|> — verify against tokenizer_config.jso
 
 
 def prepare_model(input_dir):
-    """Load HF model from local path or HuggingFace."""
+    """Load HF model config from local path or HuggingFace."""
     from transformers import AutoConfig
 
     print("\n[1/4] Loading model config...")
-    config = AutoConfig.from_pretrained(input_dir, trust_remote_code=True)
+    # trust_remote_code=False: config.json is standard JSON — no need for
+    # the custom modeling code (which requires av/cv2/decord).
+    config = AutoConfig.from_pretrained(input_dir, trust_remote_code=False)
     print(f"  architecture : {config.architectures[0]}")
     print(f"  hidden_size  : {config.hidden_size}")
     print(f"  num_layers   : {config.num_hidden_layers}")
@@ -102,9 +107,14 @@ def export_text_model(input_dir, output_dir, precision):
     print(f"\n[{3 if False else 2}/4] Exporting text decoder ({precision.upper()})...")
     print(f"  Source: {input_dir}")
 
+    # create_model(model_name, input_path, ...):
+    #   model_name  — HF repo ID used for config/tokenizer lookup
+    #   input_path  — local dir (or HF repo ID when downloading)
+    hf_id = HF_MODEL_ID
+    local_or_hf = input_dir if input_dir is not None else hf_id
     create_model(
-        HF_MODEL_ID if input_dir is None else input_dir,
-        input_dir,
+        hf_id,
+        local_or_hf,
         output_dir,
         precision,
         "cpu",
@@ -226,10 +236,9 @@ def main():
     print(f"  Precision: {args.precision.upper()}")
     print(f"  Mode     : {'text-only (Phase 1)' if args.text_only else 'full pipeline (Phase 2)'}")
 
-    prepare_model(input_dir)
-
     if not args.text_only:
         # Phase 2: load full model weights for vision/embedding export
+        prepare_model(input_dir)
         export_vision_model(None, None, output_dir)
         export_embedding_model(None, None, output_dir)
 

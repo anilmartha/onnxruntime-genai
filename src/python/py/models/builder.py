@@ -193,7 +193,34 @@ def create_model(
     hf_token = parse_hf_token(extra_options.get("hf_token", "true"))
     hf_remote = extra_options.get("hf_remote", True)
 
-    config = AutoConfig.from_pretrained(hf_name, token=hf_token, trust_remote_code=hf_remote, **extra_kwargs)
+    # VideoChat-Flash uses custom remote code that imports heavy video libraries
+    # (av, cv2, decord, imageio) even though the LM backbone is standard Qwen2.5.
+    # Load the raw config.json via Qwen2Config to avoid pulling in video deps.
+    _vcf_arch = "VideoChatFlashQwenForCausalLM"
+    _is_vcf = False
+    try:
+        import json as _json
+        if os.path.isdir(hf_name):
+            _raw_cfg_path = os.path.join(hf_name, "config.json")
+            if os.path.isfile(_raw_cfg_path):
+                with open(_raw_cfg_path) as _f:
+                    _is_vcf = _json.load(_f).get("architectures", [None])[0] == _vcf_arch
+        else:
+            # HF repo: peek at config.json without running custom code
+            from huggingface_hub import hf_hub_download
+            _cfg_file = hf_hub_download(repo_id=hf_name, filename="config.json", token=hf_token, cache_dir=cache_dir)
+            with open(_cfg_file) as _f:
+                _is_vcf = _json.load(_f).get("architectures", [None])[0] == _vcf_arch
+    except Exception:
+        pass
+
+    if _is_vcf:
+        from transformers import Qwen2Config
+        config = Qwen2Config.from_pretrained(hf_name, token=hf_token, **extra_kwargs)
+        config.architectures = [_vcf_arch]
+        config._name_or_path = hf_name  # ensure load_weights can find the weights
+    else:
+        config = AutoConfig.from_pretrained(hf_name, token=hf_token, trust_remote_code=hf_remote, **extra_kwargs)
     if "adapter_path" in extra_options:
         from peft import PeftConfig
 
@@ -283,8 +310,9 @@ def create_model(
     elif config.architectures[0] == "Qwen2ForCausalLM":
         onnx_model = QwenModel(config, io_dtype, onnx_dtype, execution_provider, cache_dir, extra_options)
     elif config.architectures[0] == "VideoChatFlashQwenForCausalLM":
-        print("WARNING: This is only generating the text component of the model. Setting `--extra_options exclude_embeds=true` by default.")
-        extra_options["exclude_embeds"] = True
+        if "exclude_embeds" not in extra_options:
+            print("WARNING: This is only generating the text component of the model. Setting `--extra_options exclude_embeds=true` by default.")
+            extra_options["exclude_embeds"] = True
         onnx_model = VideoChatFlashQwenModel(config, io_dtype, onnx_dtype, execution_provider, cache_dir, extra_options)
     elif config.architectures[0] == "Qwen2_5_VLForConditionalGeneration":
         text_config = config.text_config
