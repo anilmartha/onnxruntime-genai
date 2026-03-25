@@ -911,3 +911,21 @@ class Qwen3VLTextModel(Qwen25VLTextModel):
             token=self.hf_token,
             trust_remote_code=self.hf_remote,
         )
+
+
+class VideoChatFlashQwenModel(QwenModel):
+    """
+    Builder for OpenGVLab/VideoChat-Flash models (VideoChatFlashQwenForCausalLM).
+
+    The language model backbone is standard Qwen2.5-7B with flat config and
+    standard weight keys (model.layers.*, lm_head.*). The model uses standard
+    2D RoPE (rope_scaling=None) and GQA (28 query heads, 4 KV heads).
+
+    This builder exports only the text decoder component. It sets exclude_embeds=True
+    so the decoder receives inputs_embeds from the embedding merger model, which
+    fuses the InternVideo2 visual tokens with text embeddings.
+    """
+
+    def __init__(self, config, io_dtype, onnx_dtype, ep, cache_dir, extra_options):
+        super().__init__(config, io_dtype, onnx_dtype, ep, cache_dir, extra_options)
+        self.model_type = "videochat_flash_qwen"
