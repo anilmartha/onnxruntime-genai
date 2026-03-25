@@ -102,7 +102,7 @@ def export_embedding_model(model, config, output_dir):
     print("  Token fusion depends on Phase 2 vision encoder output shape.")
 
 
-def export_text_model(input_dir, output_dir, precision):
+def export_text_model(input_dir, output_dir, precision, text_only):
     """Export text decoder (Qwen2.5-7B backbone) via OGA builder."""
     print(f"\n[{3 if False else 2}/4] Exporting text decoder ({precision.upper()})...")
     print(f"  Source: {input_dir}")
@@ -110,6 +110,9 @@ def export_text_model(input_dir, output_dir, precision):
     # create_model(model_name, input_path, ...):
     #   model_name  — HF repo ID used for config/tokenizer lookup
     #   input_path  — local dir (or HF repo ID when downloading)
+    # exclude_embeds controls decoder input:
+    #   text_only  → False  (input_ids,     standalone text inference)
+    #   full VLM   → True   (inputs_embeds, from embedding merger)
     hf_id = HF_MODEL_ID
     local_or_hf = input_dir if input_dir is not None else hf_id
     create_model(
@@ -119,6 +122,7 @@ def export_text_model(input_dir, output_dir, precision):
         precision,
         "cpu",
         os.path.join(output_dir, ".cache"),
+        exclude_embeds="false" if text_only else "true",
     )
     print(f"  [OK] Text decoder: {os.path.join(output_dir, 'model.onnx')}")
 
@@ -130,7 +134,14 @@ def update_genai_config(output_dir, text_only):
     with open(config_path, "r", encoding="utf-8") as f:
         config = json.load(f)
 
-    config["model"]["type"] = "videochat_flash_qwen"
+    if text_only:
+        # Text-only / standalone mode: decoder takes input_ids, no vision/embedding.
+        # Use qwen2 type so OGA loads it as a plain decoder (MultiModalLanguageModel
+        # requires vision.onnx + embedding.onnx which are not present in this mode).
+        config["model"]["type"] = "qwen2"
+    else:
+        # Full VLM pipeline: decoder takes inputs_embeds from the embedding merger.
+        config["model"]["type"] = "videochat_flash_qwen"
 
     if not text_only:
         # Phase 2: wire vision encoder and embedding merger
@@ -242,7 +253,7 @@ def main():
         export_vision_model(None, None, output_dir)
         export_embedding_model(None, None, output_dir)
 
-    export_text_model(input_dir, output_dir, args.precision)
+    export_text_model(input_dir, output_dir, args.precision, args.text_only)
 
     print("\n[4/4] Updating genai_config.json...")
     update_genai_config(output_dir, args.text_only)

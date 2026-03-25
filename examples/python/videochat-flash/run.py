@@ -15,11 +15,8 @@ Usage:
   python run.py --model ./vcf-oga-fp32-standalone --prompt "Explain ONNX in one sentence."
 
 Notes:
-  - Requires the model to be exported WITHOUT exclude_embeds (i.e. with
-    `--extra_options exclude_embeds=false` or the standalone export mode).
-  - The installed OGA binary may not recognise 'videochat_flash_qwen' as a
-    model type. If you see an unsupported-model-type error, patch
-    genai_config.json to set "type": "qwen2" — the LM backbone is identical.
+  - builder.py --text-only exports a standalone decoder with input_ids and
+    genai_config.json type=qwen2 (compatible with all OGA binary versions).
   - Uses HF AutoTokenizer directly (og.Tokenizer may fail for this model).
 """
 
